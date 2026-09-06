@@ -31,7 +31,7 @@ python3 main.py # reproduction
 - Rahul - [rahulkumawat835](https://github.com/rahulkumawat835)
 - Lavish Jangid - [lavish-j](https://github.com/lavish-j)
 - Harshiddhi Pathak - [horikita-99](https://github.com/horikita-99)
-- Anuj Tiwari []()
+- Anuj Tiwari - [anujjtiwari](https://github.com/anujjtiwari) 
 - Harsh Krishnadev Dubey []()
 - Suvasish Das - [suvasish114](https://github.com/suvasish114)
 
