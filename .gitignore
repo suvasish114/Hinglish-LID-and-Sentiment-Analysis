@@ -99,3 +99,8 @@ Thumbs.db
 # Data card files
 comi_lingua_dataset/
 files_from_rajvee/
+lid_checkpoints/
+tools/
+mallet-2.0.8/
+plots/
+dataset/

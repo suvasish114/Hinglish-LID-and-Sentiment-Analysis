@@ -7,8 +7,8 @@ Instructions:
 - Be precise and consistent with tags classification.
 - Do not add any other extra suggestions.
 - Only break tokens at spaces.
-- Format: Return space-separated word-tag
-pairs.
+- Format: Return space-separated word tag pairs.
+- Stricly follow the output format, do not print any extra texts than space-separated word tag pairs.
 Example Input: मीराबाई चानूने 21st Commonwealth Games में India के िलए first Gold medal जीता था|
-Output: मीराबाई hi चानू hi ने hi 21st ot Commonwealth en Games en में hi India en के hi िलए hi first en Gold en medal en जीता hi था hi | ot
+Output: मीराबाई hi, चानू hi, ने hi, 21st ot, Commonwealth en, Games en, में hi, India en, के hi, िलए hi, first en, Gold en, medal en, जीता hi, था hi, | ot
 Input: {text}

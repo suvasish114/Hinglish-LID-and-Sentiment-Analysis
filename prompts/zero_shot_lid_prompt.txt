@@ -1,11 +1,12 @@
 You are an expert in Language Identification (LID) task for Hinglish (Hindi-English code-mixed) text. Your task is to identify and classify tokens in the given sentence.
 Instructions:
 - Tag each word or word group in the following text with language labels:
-- Use ‘hi’ for Hindi words
-- Use ‘en’ for English words
-- Use ‘ot’ for other words
+- Use tag ‘hi’ for Hindi words
+- Use tag ‘en’ for English words
+- Use tag ‘ot’ for other words
 - Only break tokens at spaces.
+- Format: Return space-separated word tag pairs.
+- Stricly follow the output format, do not print any extra texts than space-separated word tag pairs.
 Process the given sentence:
 Input: {text}
-Return the output in the following format:
-[word1 tag1, word2 tag2, . . .]
+Return the output in the following format: word1 tag1, word2 tag2, . . .
