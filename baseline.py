@@ -17,8 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib.trainer import add_common_args, train_and_evaluate  # noqa: E402
 
-PAPER = dict(model_name="bert-base-multilingual-cased", unfreeze_last=-1, max_length=56, epochs=3, lr=2e-5,
-             run_name="mBERT_paper-baseline_full_seed42")
+PAPER = dict(model_name="bert-base-multilingual-cased", unfreeze_last=-1, max_length=56, epochs=3, lr=2e-5)
 
 
 def parse_args():
@@ -30,6 +29,7 @@ def parse_args():
     if args.paper:
         for k, v in PAPER.items():
             setattr(args, k, v)
+        args.run_name = args.run_name or f"mBERT_paper-baseline_full_seed{args.seed}"
     return args
 
 
