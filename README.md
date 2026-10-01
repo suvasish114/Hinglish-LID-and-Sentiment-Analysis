@@ -2,39 +2,52 @@
 
 This project is under active development for partial fullfillment of grade requirement for course code CS613-NLP at Indian Institute of Technology Gandhinagar.
 
-### Download Model Checkpoints
+### Enviornment setup
 
-Run the below command to download the model checkpoints using CLI. Some of the model require authentication. Make sure you have authenticated your device before accessing the model.
-
-```sh
-python3 lib/download_model_checkpoints.py
-```
-
-### Setup
-
-This project is depended on various python pip packages. Its recommended to use a virtual enviornment to keep your current workspace clearn. Use the below command sequentially
+This project require specified python libraries. Make sure to use python enviornment for the experiments.
 
 ```sh
-python3 -m venv venv # skip if you already have virtual enviornment
-source venv/bin/activate
-pip install requirements.txt # one time
-python3 download_model_checkpoints.py load_data.py # one time
-python3 main.py # reproduction
+python3 -m venv venv # create environment (one time)
+source venv/bin/activate # activate your enviornment (linux)
+pip install -r requirements.txt # install all required packages (one time)
 ```
 
+If you install any new packages, make sure to add those in `requirements.txt` by using
+
+```sh
+pip freeze > requirements.txt
+```
 > This project has been tested on CUDA12.4
+
+### Download dataset
+
+For all the experiment the datasets, models and hyperparameters remain same. Please use the data generation script to download and process the SentiMix dataset. Alongside, use `eval.py` to generate the result. Use below command to download and process the dataset.
+
+```sh
+python3 get_sentimix.py # one time 
+```
+
+This will download all the required files from the remote server and process it to `csv` format and store them in your current folder's `dataset/SentiMix/`. For evaluation use 
+
+```sh
+python3 eval.py
+```
+
+For experiment specific details, use branches `exp0`, `exp1`, ...
 
 ### Authors
 
+- Parth Dangi - [parthgdangi](https://github.com/parthgdangi)
 - Nishant Sharma - [rockbnishant](https://github.com/Rockbnishant)
 - Durgesh Mishra - [durg3sh10](https://github.com/durg3sh10)
-- Rahul - [rahulkumawat835](https://github.com/rahulkumawat835)
+- Rahul Kumawat - [rahulkumawat835](https://github.com/rahulkumawat835)
 - Lavish Jangid - [lavish-j](https://github.com/lavish-j)
 - Harshiddhi Pathak - [horikita-99](https://github.com/horikita-99)
 - Anuj Tiwari - [anujjtiwari](https://github.com/anujjtiwari) 
-- Harsh Krishnadev Dubey []()
+- Harsh Krishnadev Dubey [Hrshhh](https://github.com/Hrshhh)
 - Suvasish Das - [suvasish114](https://github.com/suvasish114)
 
-<!-- <br><br>
 
-<a href="https://github.com/suvasish114/Hinglish-LID-and-Sentiment-Analysis/graphs/contributors"><img src="https://contrib.rocks/image?repo=suvasish114/Hinglish-LID-and-Sentiment-Analysis" /></a> -->
+### Contributors
+
+<a href="https://github.com/suvasish114/Hinglish-LID-and-Sentiment-Analysis/graphs/contributors"><img src="https://contrib.rocks/image?repo=suvasish114/Hinglish-LID-and-Sentiment-Analysis"/></a> 
