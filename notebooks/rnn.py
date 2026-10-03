@@ -31,6 +31,7 @@ val_df, test_df   = train_test_split(temp_df, test_size=0.5, stratify=temp_df["l
 print(len(train_df), len(val_df), len(test_df))
 print(train_df["label"].value_counts(normalize=True))
 
+#----tokenization-------------------------------
 import torch
 import torch.nn as nn
 from collections import Counter
@@ -45,7 +46,7 @@ for df in [train_df, val_df, test_df]:
 def tokenize(text):
     return str(text).lower().split()
 
-# Creating Vocabulary
+#--------- Creating Vocabulary------------------
 counter = Counter()
 for t in train_df["text"]:
     counter.update(tokenize(t))
@@ -77,6 +78,7 @@ test_loader  = make_loader(test_df, False)
 xb, lb, yb = next(iter(train_loader))
 print(xb.shape, lb.shape, yb.shape)   # expect [64, 56] [64] [64]
 
+#-------Initialize Model------------------------------------------------
 class RecurrentClassifier(nn.Module):
     def __init__(self, vocab_size, rnn_type="lstm", bidirectional=False,
                  embed_dim=100, hidden_dim=128, num_classes=3, dropout=0.3):
@@ -85,7 +87,7 @@ class RecurrentClassifier(nn.Module):
         self.bidirectional = bidirectional
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
         self.dropout = nn.Dropout(dropout)
-        rnn_cls = {"rnn": nn.RNN, "lstm": nn.LSTM}[rnn_type]
+        rnn_cls = {"rnn": nn.RNN, "lstm": nn.LSTM, "gru": nn.GRU}[rnn_type]
         self.rnn = rnn_cls(embed_dim, hidden_dim, batch_first=True, bidirectional=bidirectional)
         self.fc = nn.Linear(hidden_dim * (2 if bidirectional else 1), num_classes)
 
@@ -157,3 +159,95 @@ model.load_state_dict(best_state)
 test, labels, preds = evaluate(model, test_loader)
 print("TEST:", test)
 print(classification_report(labels, preds, target_names=["negative", "neutral", "positive"], zero_division=0))
+
+# -------Confusion Matrix----------
+
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+def plot_confusion(labels, preds, title):
+    cm = confusion_matrix(labels, preds)
+    class_names = ["negative", "neutral", "positive"]
+    plt.figure(figsize=(5, 4))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.title(title)
+    plt.show()
+
+def run_model(rnn_type, bidirectional, epochs=10):
+    torch.manual_seed(42)
+    model = RecurrentClassifier(len(vocab), rnn_type=rnn_type, bidirectional=bidirectional).to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    best_f1, best_state = 0, None
+    for epoch in range(1, epochs + 1):
+        model.train()
+        for x, lengths, y in train_loader:
+            x, lengths, y = x.to(device), lengths.to(device), y.to(device)
+            optimizer.zero_grad()
+            loss = criterion(model(x, lengths), y)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+        val, _, _ = evaluate(model, val_loader)
+        if val["f1_w"] > best_f1:
+            best_f1 = val["f1_w"]
+            best_state = copy.deepcopy(model.state_dict())
+
+    model.load_state_dict(best_state)
+    return evaluate(model, test_loader)   # (metrics, labels, preds)
+
+rnn_test,   rnn_labels,   rnn_preds   = run_model("rnn", False)
+lstm_test,  lstm_labels,  lstm_preds  = run_model("lstm", False)
+birnn_test, birnn_labels, birnn_preds = run_model("rnn", True)
+gru_test, gru_labels, gru_preds = run_model("gru", False)
+
+# print("RNN_test:", rnn_test)
+# print("LSTM_test:", lstm_test)
+# print("BiRNN_test:", birnn_test)
+# print("GRU_test:", gru_test)
+
+plot_confusion(rnn_labels, rnn_preds, "RNN — Confusion Matrix")
+plot_confusion(lstm_labels, lstm_preds, "LSTM — Confusion Matrix")
+plot_confusion(birnn_labels, birnn_preds, "Bi-RNN — Confusion Matrix")
+plot_confusion(gru_labels, gru_preds, "GRU — Confusion Matrix")
+
+
+# ----------Comparison matrix---------
+import pandas as pd
+
+results = [
+    {"model": "RNN",    **rnn_test},
+    {"model": "LSTM",   **lstm_test},
+    {"model": "Bi-RNN", **birnn_test},
+    {"model": "GRU",    **gru_test},
+]
+
+results_df = pd.DataFrame(results)
+results_df = results_df[["model", "acc", "precision_w", "recall_w", "f1_w", "f1_micro"]]
+results_df.columns = ["model", "accuracy", "precision_weighted", "recall_weighted", "f1_weighted", "f1_micro"]
+
+results_df.to_csv("classical_models_comparison.csv", index=False)
+print(results_df)
+
+
+# ------------Creating Predicated csv file----------
+
+id2label = {0: "negative", 1: "neutral", 2: "positive"}
+
+assert len(test_df) == len(rnn_preds) == len(lstm_preds) == len(birnn_preds) == len(gru_preds)
+
+predictions_df = test_df[["id", "text", "label"]].copy()
+predictions_df = predictions_df.rename(columns={"label": "actual"})
+
+predictions_df["pred_rnn"]   = [id2label[p] for p in rnn_preds]
+predictions_df["pred_lstm"]  = [id2label[p] for p in lstm_preds]
+predictions_df["pred_birnn"] = [id2label[p] for p in birnn_preds]
+predictions_df["pred_gru"]   = [id2label[p] for p in gru_preds]
+
+predictions_df.to_csv("model_predictions.csv", index=False)
+print(predictions_df.head())
