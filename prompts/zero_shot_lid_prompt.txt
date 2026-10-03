@@ -1,12 +1,20 @@
-You are an expert in Language Identification (LID) task for Hinglish (Hindi-English code-mixed) text. Your task is to identify and classify tokens in the given sentence.
+You are an expert in Sentiment Analysis of Hinglish (Hindi-English code-mixed) text.
+
+Your task is to identify the overall sentiment expressed in the given sentence.
+
 Instructions:
-- Tag each word or word group in the following text with language labels:
-- Use tag ‘hi’ for Hindi words
-- Use tag ‘en’ for English words
-- Use tag ‘ot’ for other words
-- Only break tokens at spaces.
-- Format: Return space-separated word tag pairs.
-- Stricly follow the output format, do not print any extra texts than space-separated word tag pairs.
-Process the given sentence:
+
+- Classify the sentiment into exactly one of the following three categories:
+
+  - positive: The sentence expresses happiness, appreciation, satisfaction, or a favourable opinion.
+  - negative: The sentence expresses sadness, anger, dissatisfaction, criticism, or an unfavourable opinion.
+  -  neutral: The sentence expresses neither clearly positive nor clearly negative sentiment.
+- Consider the overall meaning and context of the sentence.
+- Pay attention to Hindi-English code mixing, negation, slang, and emojis.
+- Do not classify individual words. Classify the sentiment of the entire sentence.
+- Do not provide explanations or additional suggestions.
+- Strictly follow the output format.
+
 Input: {text}
-Return the output in the following format: word1 tag1, word2 tag2, . . .
+
+Output: Return exactly one label: positive, negative, or neutral.
