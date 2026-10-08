@@ -148,17 +148,105 @@ Smoke test: `python3 main.py --approach binary --max_train_samples 400 --max_eva
 
 #### Switch-point sources (SentiMix test, per-word switch flags against the gold switches)
 
-<!-- RESULTS_EXP2_SWITCH -->
+| switch-point source | precision | recall | F1 (switch class) | predicted switches / gold switches |
+|---|---|---|---|---|
+| lid tagger: xlm-roberta-base_full | 60.0 | 51.4 | 55.4 | 8725 / 10182 |
+| switch predictor: transformer_xlm-roberta-base_last2 | 31.2 | 67.6 | 42.7 | 22046 / 10182 |
+| switch predictor: window_lstm_w5 | 32.0 | 64.3 | 42.7 | 20457 / 10182 |
+| switch predictor: window_lstm_wflex | 33.5 | 58.1 | 42.5 | 17627 / 10182 |
 
 #### Sentiment (SentiMix test, 2,944 tweets; `+-` = mean +- std over seeds 42 / 1 / 2, single values = seed 42)
 
-<!-- RESULTS_EXP2_SENT -->
+| model | approach | pooling | switch source | seeds | weighted F1 | macro F1 | acc | dev wF1 | min/run |
+|---|---|---|---|---|---|---|---|---|---|
+| Qwen2.5-7B-Instruct | 1 no switch (attention pooling) | none | - | 42 | 70.0 | 70.3 | 69.8 | 63.2 | 18 |
+| Qwen2.5-7B-Instruct | 2 binary switch embedding | binary | gold | 42 | 69.0 | 69.3 | 68.7 | 63.1 | 18 |
+| Qwen2.5-7B-Instruct | 2 binary switch embedding | binary | lid (xlm-roberta-base_full) | 42 | 69.3 | 69.7 | 69.1 | 63.6 | 15 |
+| Qwen2.5-7B-Instruct | 3 distance-to-switch embedding | distance | gold | 42 | 68.5 | 68.8 | 68.2 | 63.6 | 15 |
+| Qwen2.5-7B-Instruct | 3 distance-to-switch embedding | distance | lid (xlm-roberta-base_full) | 42 | 69.0 | 69.3 | 68.7 | 63.6 | 15 |
+| Qwen2.5-7B-Instruct | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.01 | 42 | 69.9 | 70.2 | 69.6 | 63.8 | 15 |
+| Qwen2.5-7B-Instruct | 5 Beyond-Detection predicted switches | binary | predictor (window_lstm_wflex) | 42 | 69.6 | 69.9 | 69.3 | 63.8 | 15 |
+| Qwen2.5-7B-Instruct | 5 Beyond-Detection predicted switches | distance | predictor (window_lstm_wflex) | 42 | 69.1 | 69.4 | 68.9 | 63.9 | 15 |
+| xlm-roberta-base | 1 no switch (attention pooling) | none | - | 1,2,42 | 68.3 +- 0.1 | 68.6 +- 0.1 | 68.2 +- 0.1 | 62.1 +- 0.1 | 1 |
+| xlm-roberta-base | 2 binary switch embedding | binary | gold | 1,2,42 | 68.3 +- 0.1 | 68.5 +- 0.1 | 68.1 +- 0.1 | 61.8 +- 0.2 | 1 |
+| xlm-roberta-base | 2 binary switch embedding | binary | lid (xlm-roberta-base_full) | 1,2,42 | 68.3 +- 0.0 | 68.6 +- 0.0 | 68.2 +- 0.0 | 61.8 +- 0.1 | 1 |
+| xlm-roberta-base | 3 distance-to-switch embedding | distance | gold | 1,2,42 | 68.3 +- 0.2 | 68.6 +- 0.2 | 68.2 +- 0.2 | 62.1 +- 0.3 | 1 |
+| xlm-roberta-base | 3 distance-to-switch embedding | distance | lid (xlm-roberta-base_full) | 1,2,42 | 68.3 +- 0.3 | 68.6 +- 0.2 | 68.3 +- 0.2 | 62.1 +- 0.4 | 1 |
+| xlm-roberta-base | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.01 | 1,2,42 | 68.4 +- 0.2 | 68.6 +- 0.3 | 68.2 +- 0.3 | 62.2 +- 0.1 | 1 |
+| xlm-roberta-base | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.01, sigma=0.9 | 42 | 68.5 | 68.7 | 68.3 | 62.2 | 1 |
+| xlm-roberta-base | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.1 | 42 | 65.1 | 65.2 | 65.0 | 60.4 | 1 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | binary | predictor (transformer_xlm-roberta-base_last2) | 42 | 68.3 | 68.6 | 68.2 | 62.0 | 1 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | binary | predictor (window_lstm_w5) | 42 | 68.3 | 68.6 | 68.2 | 62.1 | 1 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | binary | predictor (window_lstm_wflex) | 1,2,42 | 68.3 +- 0.0 | 68.6 +- 0.0 | 68.2 +- 0.0 | 61.8 +- 0.2 | 1 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | distance | predictor (window_lstm_wflex) | 1,2,42 | 68.3 +- 0.3 | 68.5 +- 0.3 | 68.2 +- 0.3 | 62.1 +- 0.4 | 1 |
 
 #### Weighted F1 by number of switch points in the tweet (seed 42)
 
-<!-- RESULTS_EXP2_BUCKETS -->
+| model | approach | pooling | switch source | all | 1-2 switches (n=903) | 3-5 switches (n=1646) | 6+ switches (n=395) |
+|---|---|---|---|---|---|---|---|
+| Qwen2.5-7B-Instruct | 1 no switch (attention pooling) | none | - | 70.0 | 71.2 | 69.5 | 69.6 |
+| Qwen2.5-7B-Instruct | 2 binary switch embedding | binary | gold | 69.0 | 69.2 | 69.2 | 67.7 |
+| Qwen2.5-7B-Instruct | 2 binary switch embedding | binary | lid (xlm-roberta-base_full) | 69.3 | 70.3 | 68.4 | 71.4 |
+| Qwen2.5-7B-Instruct | 3 distance-to-switch embedding | distance | gold | 68.5 | 68.3 | 68.9 | 67.2 |
+| Qwen2.5-7B-Instruct | 3 distance-to-switch embedding | distance | lid (xlm-roberta-base_full) | 69.0 | 70.0 | 68.6 | 67.7 |
+| Qwen2.5-7B-Instruct | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.01 | 69.9 | 71.9 | 69.0 | 68.8 |
+| Qwen2.5-7B-Instruct | 5 Beyond-Detection predicted switches | binary | predictor (window_lstm_wflex) | 69.6 | 70.6 | 71.6 | 68.0 |
+| Qwen2.5-7B-Instruct | 5 Beyond-Detection predicted switches | distance | predictor (window_lstm_wflex) | 69.1 | 69.1 | 71.4 | 67.6 |
+| xlm-roberta-base | 1 no switch (attention pooling) | none | - | 68.2 | 69.3 | 67.2 | 70.3 |
+| xlm-roberta-base | 2 binary switch embedding | binary | gold | 68.3 | 69.7 | 67.8 | 67.4 |
+| xlm-roberta-base | 2 binary switch embedding | binary | lid (xlm-roberta-base_full) | 68.3 | 69.7 | 66.4 | 72.0 |
+| xlm-roberta-base | 3 distance-to-switch embedding | distance | gold | 68.5 | 69.7 | 67.5 | 69.7 |
+| xlm-roberta-base | 3 distance-to-switch embedding | distance | lid (xlm-roberta-base_full) | 68.6 | 70.3 | 66.4 | 72.1 |
+| xlm-roberta-base | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.01 | 68.4 | 69.1 | 67.7 | 69.6 |
+| xlm-roberta-base | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.01, sigma=0.9 | 68.5 | 69.2 | 67.8 | 69.9 |
+| xlm-roberta-base | 4 contrastive distillation (LASER3-CO) | none | views of gold switches, lambda=0.1 | 65.1 | 64.4 | 64.9 | 67.9 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | binary | predictor (transformer_xlm-roberta-base_last2) | 68.3 | 62.7 | 67.6 | 69.0 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | binary | predictor (window_lstm_w5) | 68.3 | 65.5 | 68.2 | 68.7 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | binary | predictor (window_lstm_wflex) | 68.3 | 64.7 | 70.5 | 67.6 |
+| xlm-roberta-base | 5 Beyond-Detection predicted switches | distance | predictor (window_lstm_wflex) | 68.6 | 66.8 | 71.0 | 67.5 |
 
-<!-- FINDINGS_EXP2 -->
+XLM-R weighted F1 by switch bucket, averaged over the 3 seeds (the table above is seed 42 only):
+
+| XLM-R configuration | 1-2 switches | 3-5 switches | 6+ switches | all |
+|---|---|---|---|---|
+| 1 no switch | 69.2 | 67.6 | 69.3 | 68.3 |
+| 2 binary, gold / LID tagger | 69.6 / 69.8 | 67.5 / 66.5 | 68.3 / 70.5 | 68.3 / 68.3 |
+| 3 distance, gold / LID tagger | 69.4 / 70.0 | 67.5 / 66.3 | 69.0 / 71.3 | 68.3 / 68.3 |
+| 4 contrastive, λ = 0.01 | 68.9 | 68.0 | 68.8 | 68.4 |
+| 5 predicted switches, binary / distance | 66.1 / 66.2 | 70.2 / 70.6 | 67.6 / 67.2 | 68.3 / 68.3 |
+
+**Findings**
+
+- **The baseline is the thing to beat, and nothing beats it.** Plain attention pooling (approach 1) gives
+  **68.3 +- 0.1** (XLM-R) and **70.0** (Qwen). It is itself +1.4 / +2.1 over the CLS / last-token baselines of
+  Experiment 0 with the same recipe - the pooling matters more than any switch information added to it. For Qwen it is
+  also the best number of the whole experiment.
+- **Approaches 2 and 3 (switch-biased pooling).** XLM-R: 68.3 for every variant - gold or LID-tagger switches, binary
+  or distance - identical to the baseline within the +-0.1-0.3 seed spread. Qwen: 68.5-69.3, i.e. 0.7-1.5 *below* the
+  baseline at one seed (the run-to-run spread of these 7B runs is about +-1). The switch source makes no difference
+  (gold ~ LID tagger ~ predicted).
+- **Approach 4 (contrastive distillation).** λ = 0.01: 68.4 +- 0.2 (XLM-R) and 69.9 (Qwen) - the baseline; the
+  LASER3-CO σ-filter changes nothing (68.5). λ = 0.1 lets the contrastive term dominate the 14 M trainable parameters and
+  costs 3 points (65.1). The InfoNCE loss hardly moves with two trainable blocks (XLM-R 5.7 -> 5.6, Qwen 12.3 -> 9.4
+  over 3 epochs, against log 4097 = 8.3 for chance): the student cannot travel far enough in the frozen pre-trained
+  space to align a code-mixed tweet with its monolingual views, so the objective works as a mild regulariser at best.
+- **Approach 5 (predicted switch points).** The Beyond-Detection style predictors reach AUC 0.81-0.83 but a switch-class
+  F1 of only 42.5-42.7 (precision ~ 33 %), far below switches derived from the LID tagger (F1 55.4): on romanised
+  Hinglish both languages share one script and the next word's language is hard to anticipate (the paper's 0.91 / 0.98
+  AUC were on Chinese-English dialogue with distinct scripts). The flexible-window LSTM is marginally the best predictor
+  on dev. Despite the noisier switch points the sentiment scores equal those with gold switches (68.3 XLM-R; 69.6 / 69.1
+  Qwen) - again a sign that the pooling is not using the feature.
+- **Switch information redistributes errors instead of removing them.** Averaged over seeds, LID-derived switches give
+  XLM-R +1.2 / +2.0 on tweets with 6+ switch points (binary / distance) but -1.1 / -1.3 on the 3-5 bucket; predicted
+  switches give +2.6 / +3.0 on the 3-5 bucket and -3.1 on the 1-2 bucket. The buckets cancel in the overall score. Qwen
+  shows the same pattern at seed 42 (binary + LID switches: +1.8 on 6+ switches, -1.1 on 3-5).
+- **Answer to the research question.** Under the project recipe (last 2 blocks, seed 42, batch 32) the language
+  switch-point information does **not** improve SentiMix sentiment for either model: all five approaches end within noise
+  of (XLM-R) or below (Qwen) the attention-pooling baseline. The LID-tag fusion of Experiment 1 (+1.0 for XLM-R) remains the
+  only language signal with a measurable overall effect so far.
+- **Next.** 3 seeds for Qwen; inject the switch embedding into the hidden states (as the LID tags in Experiment 1)
+  instead of only into the attention logits; more trainable blocks for the contrastive objective; PESTO-style
+  switch-relative positional encodings; the "negative token attention" item of the scope list.
 
 *Previous iteration of this branch (PR #7, first version): the same pooling variants with full fine-tuning (XLM-R) and
 QLoRA (Qwen) instead of the project recipe; those numbers are superseded by the tables above.*
