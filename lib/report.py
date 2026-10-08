@@ -37,7 +37,8 @@ def load_runs(results_dir):
         a = m["args"]
         runs.append({"config": re.sub(r"_seed\d+$", "", m["run_name"]), "seed": a["seed"], "model": a["model_name"].split("/")[-1],
                      "approach": APPROACH_NAMES.get(a["approach"], a["approach"]),
-                     "switch source": "-" if a["pooling"] == "none" else a["switch_source"] + (f" ({Path(a['switch_dir']).name})" if a.get("switch_dir") else ""),
+                     "switch source": (f"views of gold switches, lambda={a['contrastive_weight']}" + (f", sigma={a['contrastive_filter']}" if a.get("contrastive_filter") else "")) if a["approach"] == "contrastive"
+                     else "-" if a["pooling"] == "none" else a["switch_source"] + (f" ({Path(a['switch_dir']).name})" if a.get("switch_dir") else ""),
                      "pooling": a["pooling"], "test": m["test"], "dev": m["dev"], "minutes": m["train_minutes"]})
     return runs
 
@@ -67,11 +68,11 @@ def table(results_dir):
 def by_switches(results_dir, seed=42):
     runs = [r for r in load_runs(results_dir) if r["seed"] == seed]
     buckets = ["switches_1-2", "switches_3-5", "switches_6+"]
-    cols = ["model", "approach", "switch source", "all"] + [f"{b.split('_')[1]} switches (n={runs[0]['test'][b]['n']})" for b in buckets if b in runs[0]["test"]]
+    cols = ["model", "approach", "pooling", "switch source", "all"] + [f"{b.split('_')[1]} switches (n={runs[0]['test'][b]['n']})" for b in buckets if b in runs[0]["test"]]
     print("| " + " | ".join(cols) + " |\n|" + "|".join("---" for _ in cols) + "|")
-    for r in sorted(runs, key=lambda r: (r["model"], r["approach"], r["switch source"])):
+    for r in sorted(runs, key=lambda r: (r["model"], r["approach"], r["pooling"], r["switch source"])):
         vals = [f"{100 * r['test']['weighted_f1']:.1f}"] + [f"{100 * r['test'][b]['weighted_f1']:.1f}" for b in buckets if b in r["test"]]
-        print(f"| {r['model']} | {r['approach']} | {r['switch source']} | " + " | ".join(vals) + " |")
+        print(f"| {r['model']} | {r['approach']} | {r['pooling']} | {r['switch source']} | " + " | ".join(vals) + " |")
 
 
 def switch_quality(results_dir, split="test"):

@@ -39,110 +39,129 @@ For experiment specific details, use branches `exp0`, `exp1`, ...
 
 ## Experiment 2 - Switch Point + Sentiment (branch `exp2`)
 
-**Research question.** If the model is given the language *switch point* information, does the sentiment score improve?
+**Research question.** If the sentiment model is given the language *switch-point* information, does the score improve?
 
 ```
 Tokens:  Movie  bahut  acchi  thi  but  ending  was  terrible
-LID:       EN     HI     HI    HI   EN     EN     EN     EN
-Switch:     0      1      0     0    1      0      0      0
+LID:       e      h      h     h    e     e       e     e
+Switch:    0      1      0     0    1     0       0     0
 ```
 
-`switch_i = 1 if LID_i != LID_{i-1} else 0` (`switch_0 = 0`). Tokens tagged `o` (punctuation, mentions,
-emoji) are transparent by default, i.e. `hin o eng` is a single switch; use `--naive_switch` to change that.
+`switch_i = 1 if LID_i != LID_{i-1} else 0`, `switch_0 = 0` by convention. Tokens tagged `o` (punctuation, mentions,
+emoji, numbers) are transparent: `h o e` is one switch. SentiMix test tweets have 1 to 16 switch points each (no
+monolingual tweet).
 
-**Model.** Any HuggingFace encoder (default `xlm-roberta-base`) followed by *switch-biased attention pooling*
+### Setup shared by all five approaches
 
-    a_i = softmax( W_h h_i + W_s e_i^sw + b ),     s = sum_i a_i h_i,     logits = W_c s
+| | |
+|---|---|
+| data | shared `get_sentimix.py`, roman-script tweets, lower-cased: 13,912 / 2,978 / 2,944 train / dev / test; gold word-level LID tags {h, e, o} |
+| models | `FacebookAI/xlm-roberta-base` (12 blocks, 278 M) and `Qwen/Qwen2.5-7B-Instruct` (28 blocks, 7.1 B; loaded with `AutoModel`, i.e. without the LM head, bf16 weights sharded over two 24 GB GPUs) |
+| what is trained | only the **last 2 transformer blocks** (+ final norm) of the encoder and the heads (pooling, classifier); everything else is frozen. XLM-R: 14.2 M trainable parameters, Qwen: 466 M |
+| optimisation | **seed 42** (XLM-R additionally seeds 1 and 2 to measure noise), **batch size 32**, 3 epochs, AdamW lr 2e-5, weight decay 0.01, linear schedule with 10 % warm-up, max length 128, bf16 autocast, checkpoint = epoch with the best dev weighted F1 |
+| temperature | **T = 0** does not apply - there is no generation; a linear classifier reads a pooled state. (The contrastive τ below is a different quantity.) |
+| features | encoder states `h_i` per sub-word; a word's switch feature is copied to all of its sub-words; special tokens are excluded from the pooling |
+| metrics | weighted F1 (official SentiMix metric), macro F1 (shared `evaluate_all.py`), accuracy; mean +- std over seeds where available |
 
-where `e_i^sw` is a small learned embedding (16-d) of the switch feature. Variants compared (`--pooling`):
+### The five approaches (one flag each: `--approach`)
 
-| `--pooling` | switch feature `e_i^sw`                                    |
-|-------------|-------------------------------------------------------------|
-| `none`      | *baseline*: plain attention pooling, no switch information   |
-| `binary`    | embedding of the binary switch flag {0, 1}                   |
-| `distance`  | embedding of bucketed distance to nearest switch {0,1,2,3+}  |
-| `cls`/`mean`| extra reference points (no attention pooling)                |
+**1. No switch - baseline** (`no_switch`). Attention pooling without any switch information:
+`a_i = softmax_i( w^T h_i + b )`, sentiment vector `s = sum_i a_i h_i`, `logits = W_c dropout(s) + b_c`.
 
-Switch points come either from the gold SentiMix LID tags (`--switch_source gold`) or from a small
-token-level LID tagger (`lib/lid_tagger.py`, EN/HI/O) that is trained once and then **frozen**
-(`--switch_source predicted`); the sentiment model never back-propagates into the tagger.
+**2. Binary switch embedding** (`binary`). Switch-biased attention pooling, `a_i = softmax_i( W_h h_i + W_s e(sw_i) + b )`
+with `e` a learned 16-d embedding of the binary flag `sw_i in {0, 1}`; `W_s` is zero-initialised so the model equals
+approach 1 at step 0. Switch points come from the gold LID tags (`--switch_source gold`) or from the frozen LID tagger of
+Task 1 (`--switch_source lid`).
+
+**3. Distance-to-switch embedding** (`distance`). Same pooling with `e(d_i)`, `d_i = min(distance in words to the nearest
+switch, 3) in {0, 1, 2, 3+}` - a smoother signal than the sparse binary flag. Same two switch sources.
+
+**4. Contrastive learning** (`contrastive`) - *Multilingual Representation Distillation with Contrastive Learning*
+(Tan, Heffernan, Schwenk, Koehn, EACL 2023), model LASER3-CO. What the paper does: a student encoder θ_s and a frozen
+teacher θ_t; for a parallel pair (x, y) the student embedding `q = θ_s(x)` must match the teacher embedding of the
+translation `k+ = θ_t(y)` against a queue of N = 4096 teacher embeddings of earlier batches (negatives), with InfoNCE
+`L = -log exp(q.k+/τ) / sum_i exp(q.k_i/τ)`, τ = 0.05; LASER3-CO-Filter additionally drops "extremely hard" negatives with
+`cos(k+, k_i) >= σ` (σ = 0.9). Our adaptation to SentiMix, which has no parallel sentences: the pair (x, y) becomes
+(code-mixed tweet, one of its **language views**), where the Hindi view is the sequence of the words of the tweet's Hindi
+segments (the maximal runs delimited by the switch points) and likewise for English; one view is drawn at random per step.
+The teacher is the pre-trained encoder before fine-tuning, mean-pooled; its embeddings are pre-computed once (frozen by
+construction) and mean-centred, because raw mean-pooled states have cosine > 0.9 between any two tweets. `q` is the
+sentiment vector `s` of approach-1 pooling. Total loss `L = L_CE + λ L_contrastive`, λ chosen on the dev set among
+{0.1, 0.01}; the σ-filter is available with `--contrastive_filter 0.9`. The approach uses the switch points only to build
+the views - the pooling itself is the approach-1 baseline.
+
+**5. Predicted switch points** (`beyond_detection`) - *Beyond Detection: Predicting Code-Switch Points in Multilingual
+Conversations* (Xie, Zhang, Koshal, Sushmita, WiML @ NeurIPS 2025). The paper predicts upcoming switch points token by
+token with two paradigms: (1) window-based models - BERT embeddings of the preceding tokens fed to a recurrent network,
+with fixed and flexible context windows; (2) a transformer token classifier built on mBERT / XLM-RoBERTa; it reports ROC-AUC
+(best RNN 0.91, mBERT 0.98 on Chinese-English ASCEND). On SentiMix we train both paradigms on the gold switch points
+(`lib/switch_predictor.py`): (1) frozen `bert-base-multilingual-cased` word embeddings -> LSTM over the last 5 words or over
+the whole prefix (flexible window) -> `P(switch at the next word)`, causal; (2) `xlm-roberta-base` token classifier (last 2
+blocks trained) -> `P(switch at this word)`. We report AUC (overall and per direction h->e / e->h, as the paper does per
+direction), P / R / F1 of the switch class, and select the predictor with the best dev F1 of its per-word switch flags.
+Its *predicted* switch points then replace the LID-derived ones in the approach-2/3 pooling
+(`--approach beyond_detection --pooling binary|distance`). Only the paradigms and the metric come from the paper (its full
+text is not openly accessible); window size, LSTM size, class weighting and the decision threshold are our choices.
+
+**Task 1 - LID tagger** (`lib/lid_tagger.py`, source of the `lid` switch points). `xlm-roberta-base` fine-tuned as a token
+classifier on the SentiMix word tags (test token accuracy 91.7 %, macro-F1 92.8, see Experiment 1), then frozen: it only
+writes `{split}_pred_tags.csv`, so no gradient ever reaches it.
 
 ### Layout
 
 ```
-lib/data.py        build/load train, dev, test CSVs (re-uses the shared get_sentimix.py, unchanged)
-lib/switch.py      switch points, distance buckets, word -> sub-word alignment
-lib/lid_tagger.py  token-level LID tagger (fine-tuned encoder), writes {split}_pred_tags.csv
-lib/model.py       SwitchAwareSentimentModel (encoder + switch-biased attention pooling)
-lib/train.py       training loop; writes results/exp2/<run>.csv + ground.csv for evaluate_all.py
-main.py            CLI gateway (all hyper-parameters)
-run.sh             full reproduction: tagger + 2 x 3 sentiment runs + shared evaluation
+lib/data.py              SentiMix loader (output of the shared get_sentimix.py), sub-word <-> word alignment
+lib/switch.py            switch points, directions, distance buckets, language views, upcoming-switch labels
+lib/lid_tagger.py        Task 1: LID tagger -> results/exp2/lid/<tagger>/{train,dev,test}_pred_tags.csv
+lib/switch_predictor.py  approach 5: window BERT+RNN / transformer switch predictors -> results/exp2/switch/<predictor>/{split}_pred_switch.csv
+lib/model.py             SwitchAttentionPooling (approaches 1-3), ContrastiveDistillation (approach 4), SentimentModel
+lib/train.py             training loop -> results/exp2/<run>.csv + ground.csv (format of evaluate_all.py) + <run>_metrics.json
+lib/report.py            README tables: configurations (mean +- std over seeds), weighted F1 by #switches, switch-point quality
+main.py                  CLI gateway: --approach no_switch|binary|distance|contrastive|beyond_detection
+run.sh                   whole pipeline for one model (tagger, predictors, 8 sentiment runs, evaluation)
 ```
+
+Shared scripts (`get_sentimix.py`, `evaluate_all.py`, `requirements.txt`) are untouched; the branch is synced with `main`.
 
 ### Run
 
 ```sh
-cp .env.example .env            # DATA_HOME=dataset, HG_DATACARD=RTT1/SentiMix
-python3 lib/data.py             # download + build train/dev/test (test labels are joined from test_labels_hinglish.txt)
-python3 lib/lid_tagger.py       # 1. LID tagger  -> checkpoints/lid_xlm-roberta-base/
-python3 main.py --pooling none                        # 2a. baseline
-python3 main.py --pooling binary                      # 2b. binary switch embedding (gold LID)
-python3 main.py --pooling distance                    # 2c. distance-to-switch embedding (gold LID)
-python3 main.py --pooling binary --switch_source predicted --pred_tags_dir checkpoints/lid_xlm-roberta-base
-cd results/exp2 && python3 ../../evaluate_all.py --ground ground.csv --pred-glob "*.csv"   # 3. shared eval
+cp .env.example .env && python3 get_sentimix.py                                   # shared data pipeline (one time)
+python3 lib/lid_tagger.py --model_name xlm-roberta-base --save_model              # Task 1 (frozen tagger)
+python3 lib/switch_predictor.py --paradigm window --window 5                      # approach 5, predictors
+python3 lib/switch_predictor.py --paradigm window --window 0                      #   (flexible window)
+python3 lib/switch_predictor.py --paradigm transformer                            #   (XLM-R token classifier)
+python3 lib/report.py --switch_quality                                            # which switch-point source is best?
+python3 main.py --approach no_switch                                              # 1
+python3 main.py --approach binary   --switch_source gold                          # 2  (also: --switch_source lid --switch_dir results/exp2/lid/xlm-roberta-base_full)
+python3 main.py --approach distance --switch_source gold                          # 3
+python3 main.py --approach contrastive --contrastive_weight 0.1                   # 4
+python3 main.py --approach beyond_detection --pooling binary --switch_dir results/exp2/switch/<best predictor>   # 5
+python3 lib/report.py; python3 lib/report.py --by_switches                        # tables
+python3 evaluate_all.py --ground results/exp2/ground.csv --pred-glob "results/exp2/*.csv" --out results/exp2/evaluation_results.csv
 ```
 
-or simply `bash run.sh [MODEL_NAME]`. Smoke test on CPU/GPU with
-`python3 main.py --max_train_samples 400 --max_eval_samples 200 --epochs 1`.
-Large decoder models (QLoRA): `python3 main.py --model_name Qwen/Qwen2.5-7B-Instruct --lora --load_in_4bit --batch_size 8 --lr 1e-4 --epochs 2`.
-Other encoders: `--model_name sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 --lr 5e-5`.
+or `bash run.sh [MODEL]`. For Qwen: `EXTRA='--dtype bfloat16 --device_map auto --max_memory 0:7GiB,1:20GiB --gradient_checkpointing --eval_batch_size 32' bash run.sh Qwen/Qwen2.5-7B-Instruct`.
+Smoke test: `python3 main.py --approach binary --max_train_samples 400 --max_eval_samples 200 --epochs 1`.
 
-Each run writes `results/exp2/<run>_metrics.json` with dev/test accuracy and macro P/R/F1
-(same formula as `evaluate_all.py`) plus a breakdown on sentences **with** vs **without** a switch.
+### Results
 
-### Results (SentiMix test, 2 944 roman tweets, macro-F1 from the shared `evaluate_all.py`)
+#### Switch-point sources (SentiMix test, per-word switch flags against the gold switches)
 
-Frozen LID tagger (`lib/lid_tagger.py`, xlm-roberta-base, 2 epochs): test token-acc 0.912 / macro-F1 0.922.
+<!-- RESULTS_EXP2_SWITCH -->
 
-Three encoders, same data, same training loop, same pooling variants. Small encoders: 3 epochs, batch 32,
-full fine-tuning (lr 2e-5 for XLM-R, 5e-5 for MiniLM). Qwen2.5-7B-Instruct: LoRA r=8 on all linear layers,
-4-bit NF4 base, batch 8, lr 1e-4, 2 epochs, ~40 min per run on one RTX A5000.
-Cells with +- are mean +- std over seeds {42, 1, 2} (3 seeds) or {42, 1} where marked (2 seeds); the rest are seed 42 only.
+#### Sentiment (SentiMix test, 2,944 tweets; `+-` = mean +- std over seeds 42 / 1 / 2, single values = seed 42)
 
-| encoder | params | baseline (none) | binary, gold | distance, gold | binary, predicted | distance, predicted | distance + mlp, gold |
-|---|---|---|---|---|---|---|---|
-| MiniLM-L12 (paraphrase-multilingual) | 118M | 0.695 +- 0.006 | 0.693 +- 0.000 | 0.698 +- 0.006 | 0.689 | 0.704 | 0.700 |
-| xlm-roberta-base | 278M | 0.715 +- 0.004 | 0.715 +- 0.003 | 0.712 +- 0.004 | 0.705 | 0.711 | 0.719 |
-| Qwen2.5-7B-Instruct (QLoRA) | 7.6B | 0.729 +- 0.000 (2 seeds) | **0.735** | 0.730 | 0.724 | 0.734 | 0.732 +- 0.011 (2 seeds) |
+<!-- RESULTS_EXP2_SENT -->
 
-Full per-run table incl. dev F1 / accuracy / P / R: `python3 lib/summarize.py` -> `results/exp2/summary.csv`.
+#### Weighted F1 by number of switch points in the tweet (seed 42)
 
-Test macro-F1 by number of switch points per tweet (`lib/analyze.py`; every test tweet has >= 1 switch):
+<!-- RESULTS_EXP2_BUCKETS -->
 
-| encoder / pooling | 1-2 switches (n=916) | 3-5 (n=1640) | 6-9 (n=381) |
-|---|---|---|---|
-| xlm-roberta-base, none (3 seeds) | 0.734 | 0.708 | 0.699 |
-| xlm-roberta-base, binary (3 seeds) | 0.732 | 0.708 | 0.705 |
-| xlm-roberta-base, distance (3 seeds) | 0.731 | 0.703 | 0.703 |
-| Qwen2.5-7B, none | 0.729 | 0.728 | 0.730 |
-| Qwen2.5-7B, binary | 0.714 | 0.740 | **0.754** |
-| Qwen2.5-7B, distance | 0.718 | 0.731 | 0.749 |
-| Qwen2.5-7B, distance + mlp | 0.743 | 0.735 | 0.745 |
+<!-- FINDINGS_EXP2 -->
 
-**Take-aways.**
-1. Encoder size dominates: baselines go 0.695 -> 0.715 -> 0.729 from MiniLM to XLM-R to Qwen-7B, a bigger spread than any pooling variant produces within one encoder.
-2. On the two small encoders, switch information does **not** move overall test F1 beyond seed noise (+-0.4-0.6 F1).
-3. On Qwen2.5-7B every seed-42 switch-aware variant is at or above the baseline (0.730-0.740 vs 0.729), but a second seed of `distance + mlp` scored 0.724, so its 2-seed mean is 0.732 +- 0.011 vs a very stable baseline 0.729 +- 0.000. The Qwen gains are therefore also within seed noise; the single best run (0.740) was a favourable seed.
-4. Where any gain lives: on switch-heavy tweets (6-9 switches) Qwen `binary` and `distance` beat the baseline by +2.4 / +1.9 F1 (seed 42), while on 1-2-switch tweets the linear variants are *below* the baseline (-1.1 to -1.5). The switch bias helps where there are many switches to exploit and slightly hurts where there are few; the two effects roughly cancel in the overall score. This bucket pattern is the most promising lead and needs more seeds to confirm.
-5. Switch points from the frozen tagger (91% token accuracy) instead of gold LID cost 0-1 F1; the `distance` variant is the more robust of the two to tagger noise.
-6. Dev F1 (~0.63-0.66) is consistently ~7 points below test F1 for every model; the SentiMix dev split is harder than test. Dev is only used to pick the best epoch.
-
-Next steps: 3+ seeds for every Qwen variant (the deciding evidence is still missing), fuse `e_i^sw` into `h_i` (not only into the attention score),
-PESTO-style switch-relative positional encoding, and the contrastive variants from the experiment notes.
-
-Notes: the `emt` (emoticon) tag of SentiMix is folded into `o`; a handful of rows with a non-numeric
-id emitted by the shared parser (a token literally spelled `meta`) and one exact duplicate id per
-training split are dropped in `lib/data.py`. The test split (2 944 roman rows) is unaffected.
+*Previous iteration of this branch (PR #7, first version): the same pooling variants with full fine-tuning (XLM-R) and
+QLoRA (Qwen) instead of the project recipe; those numbers are superseded by the tables above.*
 
 ### Authors
 
