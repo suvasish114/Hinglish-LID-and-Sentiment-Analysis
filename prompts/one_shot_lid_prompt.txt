@@ -1,0 +1,22 @@
+You are an expert in Sentiment Analysis of Hinglish (Hindi-English code-mixed) text.
+
+Your task is to identify the overall sentiment expressed in the given sentence.
+
+Instructions:
+
+- Classify the sentiment into exactly one of the following three categories:
+
+  - positive
+  - negative
+  - neutral
+- Consider the overall meaning and context of the sentence.
+- Pay attention to Hindi-English code mixing, negation, slang, and emojis.
+- Do not classify individual words.
+- Return only one sentiment label without any explanation.
+
+Example:
+Input: Yaar movie bahut acchi thi, maza aa gaya!
+Output: positive
+
+Input: {text}
+Output:
