@@ -14,22 +14,43 @@ Original file is located at
 from pathlib import Path
 import pandas as pd, ast
 from sklearn.model_selection import train_test_split
+import ast
 
-df = pd.read_csv(Path("..") / "data" / "SentiMix" / "train.csv")
-df["text"]  = df["sentence"].apply(lambda s: " ".join(ast.literal_eval(s)))
-df["label"] = df["sentiment"]
-df = df[["id", "text", "label"]] # Drop all column except "id","text","label"
-# print(df.head(5))
-print("empty text rows:", (df["text"].str.strip() == "").sum())
-print("duplicate ids:", df["id"].duplicated().sum())
 
-df = df[df["text"].str.strip() != ""].drop_duplicates(subset="id")
+def load(path):
+    df = pd.read_csv(path)
+    df["text"]  = df["sentence"].apply(lambda s: " ".join(ast.literal_eval(s)))
+    df["label"] = df["sentiment"]
+    df = df[["id", "text", "label"]]
+    print(path, "| empty text rows:", (df["text"].str.strip() == "").sum(),
+          "| duplicate ids:", df["id"].duplicated().sum())
+    df = df[df["text"].str.strip() != ""].drop_duplicates(subset="id")
+    return df.reset_index(drop=True)
 
-train_df, temp_df = train_test_split(df, test_size=0.2, stratify=df["label"], random_state=42)
-val_df, test_df   = train_test_split(temp_df, test_size=0.5, stratify=temp_df["label"], random_state=42)
+train_df = load(Path("..") / "data" / "SentiMix" / "train.csv")
+val_df   = load(Path("..") / "data" / "SentiMix" / "dev.csv")
+test_df  = load(Path("..") / "data" / "SentiMix" / "test.csv")
 
 print(len(train_df), len(val_df), len(test_df))
 print(train_df["label"].value_counts(normalize=True))
+print(test_df["label"].value_counts())
+
+
+# df = pd.read_csv(Path("..") / "data" / "SentiMix" / "train.csv")
+# df["text"]  = df["sentence"].apply(lambda s: " ".join(ast.literal_eval(s)))
+# df["label"] = df["sentiment"]
+# df = df[["id", "text", "label"]] # Drop all column except "id","text","label"
+# # print(df.head(5))
+# print("empty text rows:", (df["text"].str.strip() == "").sum())
+# print("duplicate ids:", df["id"].duplicated().sum())
+
+# df = df[df["text"].str.strip() != ""].drop_duplicates(subset="id")
+
+# train_df, temp_df = train_test_split(df, test_size=0.2, stratify=df["label"], random_state=42)
+# val_df, test_df   = train_test_split(temp_df, test_size=0.5, stratify=temp_df["label"], random_state=42)
+
+# print(len(train_df), len(val_df), len(test_df))
+# print(train_df["label"].value_counts(normalize=True))
 
 #----tokenization-------------------------------
 import torch
