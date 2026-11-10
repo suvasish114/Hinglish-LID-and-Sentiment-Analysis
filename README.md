@@ -35,6 +35,14 @@ python3 eval.py
 
 For experiment specific details, use branches `exp0`, `exp1`, ...
 
+# Training Individual Python Files
+
+```sh
+python routing_cross_attention.py xlm-roberta-base
+python routing_cross_attention.py IndicBERT-v3-1B
+python3 routing_cross_attention.py xlm-roberta-base --lid-loss-weight 1.0
+```
+
 ### Authors
 
 - Parth Dangi - [parthgdangi](https://github.com/parthgdangi)

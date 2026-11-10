@@ -101,3 +101,7 @@ comi_lingua_dataset/
 files_from_rajvee/
 dataset/
 plots/
+adapter/
+model_checkpoints/
+models/
+venv/

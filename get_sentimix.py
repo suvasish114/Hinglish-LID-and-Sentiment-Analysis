@@ -1,29 +1,31 @@
 # this script downloads dataset from HuggingFace and processes it in CSV format
 
+# imports
 import os, ast
 import csv
 import unicodedata
 import pandas as pd
 from huggingface_hub import snapshot_download
 
-MODEL_PATH="model_checkpoints/"
+# enviornment variables
 HG_DATACARD="RTT1/SentiMix"
 DATA_HOME="dataset/"
-BATCH_SIZE = 8
-EPOCH = 10
 
+# converting tags to single characters
 folder = os.path.join(DATA_HOME, "SentiMix")
 tag_mapping = {"o": "o", "hin": "h", "eng": "e"}
 if DATA_HOME is None:
     raise ValueError("DATA_HOME environment variable is not defined.")
 os.makedirs(DATA_HOME, exist_ok=True)
 
+# converting tags
 def convert_tags(value):
     if pd.isna(value):
         return value
     tags = ast.literal_eval(value)
     return [tag_mapping.get(tag, tag) for tag in tags]
 
+# loading the enrite data dump
 def load_dataset(datacard):
     dataset_dir = os.path.join(DATA_HOME, datacard.rsplit("/", 1)[-1])
     # A directory alone does not prove a previous download completed.
@@ -36,7 +38,7 @@ def load_dataset(datacard):
         raise RuntimeError(f"Failed to download {datacard}: {exc}") from exc
     return dataset_dir
 
-
+# process the dump and convert it into csv file
 def process_dataset(dataset_dir, split_name="train", is_roman=False):
     files = sorted(
         name for name in os.listdir(dataset_dir)
@@ -88,7 +90,7 @@ def process_dataset(dataset_dir, split_name="train", is_roman=False):
         writer.writerows(selected)
     print(f"[SUCCESS] Saved {len(selected)} / {len(rows)} samples to {output_file}")
 
-
+# sanity check for roman text
 def is_roman_text(sentence: str) -> bool:
     if not isinstance(sentence, str):
         return False
@@ -102,6 +104,7 @@ def is_roman_text(sentence: str) -> bool:
                 return False
     return True
 
+# replace unwanted tags from the file
 def replace_emt_tags(csv_path):
     df = pd.read_csv(csv_path)
     def replace_tags(value):
@@ -115,6 +118,7 @@ def replace_emt_tags(csv_path):
     df["tags"] = df["tags"].apply(replace_tags)
     df.to_csv(csv_path, index=False)
 
+# driving code
 def main():
     dataset_dir = load_dataset(HG_DATACARD)
     labels_path = os.path.join(dataset_dir, "test_labels_hinglish.txt")
@@ -143,9 +147,9 @@ def main():
             os.remove(file_path)
     os.remove(os.path.join(folder, "Hindi.csv"))
 
-
+# program runner
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:
+    except Exception as exc: # sanity check
         raise SystemExit(f"[FAILED] {exc}") from exc
