@@ -1,4 +1,5 @@
-import os, ast 
+import os, ast
+from pathlib import Path
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
@@ -50,7 +51,6 @@ def main(csv_path, set_name):
     # plot_tsne(hi_embeddings, ot_samples, "hindi-roman", "other", "tsne_hin_oth")
 
 if __name__ == "__main__":
-    csv_path="/Users/papai/Documents/CS613/dataset/SentiMix/dev.csv"
-    main(csv_path, "dev")
-    csv_path="/Users/papai/Documents/CS613/dataset/SentiMix/train.csv"
-    main(csv_path, "train")
+    data_dir = Path(__file__).resolve().parent.parent / "dataset" / "SentiMix"
+    main(data_dir / "dev.csv", "dev")
+    main(data_dir / "train.csv", "train")

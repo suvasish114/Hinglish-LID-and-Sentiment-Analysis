@@ -1,93 +1,57 @@
-# # imports
-# import torch
-# from pathlib import Path
-# from tqdm import tqdm
-# from transformers import AutoTokenizer, AutoModel
-# from tsne import plot_tsne, get_words_by_tag, get_embeddings
-
-# # config
-# model_card = "FacebookAI/xlm-roberta-base"
-
-# # helper functions
-# def get_model(model_path):
-#     model_dir = Path(model_path)
-#     model, tokenizer = None, None
-#     if model_dir.is_dir():
-#         tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-base")
-#         model = AutoModel.from_pretrained("xlm-roberta-base")
-
-#         tokenizer.save_pretrained(model_dir)
-#         model.save_pretrained(model_dir)
-#     else:
-#         MODEL_DIR = "models/xlm-roberta-base"
-#         tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR, local_files_only=True)
-#         model = AutoModel.from_pretrained(MODEL_DIR, local_files_only=True)
-#         model.eval()
-#     return model, tokenizer
-
-# # @torch.inference_mode()
-# # def get_word_embedding(model, tokenizer, word: str) -> torch.Tensor:
-# #     if not word.strip():
-# #         raise ValueError("word must not be empty")
-# #     inputs = tokenizer(word, return_tensors="pt", return_special_tokens_mask=True)
-# #     special_mask = inputs.pop("special_tokens_mask")
-# #     device = next(model.parameters()).device
-# #     inputs = {key: value.to(device) for key, value in inputs.items()}
-# #     hidden_states = model(**inputs).last_hidden_state[0]
-# #     word_mask = ((special_mask[0] == 0) & (inputs["attention_mask"][0].cpu() == 1)).to(device)
-# #     if not word_mask.any():
-# #         raise ValueError("word produced no usable tokens")
-# #     return hidden_states[word_mask].mean(dim=0).cpu()
-
-# # drivng code
-# if __name__ == "__main__":
-#     model_dir = "models/xlm-roberta-base"
-#     model, tokenizer = get_model(model_dir)
-#     csv_path="/Users/papai/Documents/CS613/dataset/SentiMix/train.csv"
-#     hi_samples = get_words_by_tag(csv_path, 'h', total_words=2000)
-#     en_samples = get_words_by_tag(csv_path, 'e', total_words=2000)
-#     # hi_embeddings = [get_word_embedding(model, tokenizer, word) for word in tqdm(hi_samples, desc="collecting hin emb:")]
-#     # en_embeddings = [get_word_embedding(model, tokenizer, word) for word in tqdm(en_samples, desc="collecting eng emb:")]
-#     # plot_tsne(hi_embeddings, en_embeddings, "hindi-roman", "english-roman", f"roberta_tsne_hin_eng_train")
-
-
-
+# Zero-shot / one-shot sentiment prompting with xlm-roberta-base (baseline).
+#
+# XLM-R is an encoder: it cannot write an answer. Each prompt therefore ends in
+# 'Output: <mask>' and the model's scores for the label words at the <mask>
+# decide the sentiment.
+#
+# Output (in results/):
+#   xlmr_zero_shot.csv   columns: id, sentiment
+#   xlmr_one_shot.csv    columns: id, sentiment
+#
+# Run from anywhere:  python3 prompt_/roberta_base_tsne.py [--n_samples N]
 
 # imports
+import argparse
 import ast
+from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
-from sklearn.metrics import (precision_recall_fscore_support, accuracy_score,
-                             confusion_matrix)
 from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
-# config
+# config (paths are relative to the repo root, not to where you run from)
+REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_CARD = "FacebookAI/xlm-roberta-base"
-MODEL_DIR = "models/xlm-roberta-base-mlm"
+MODEL_DIR = REPO_ROOT / "models" / "xlm-roberta-base-mlm"
+ZERO_SHOT_PROMPT = REPO_ROOT / "prompts" / "zero_shot_sentiment_prompt.txt"
+ONE_SHOT_PROMPT = REPO_ROOT / "prompts" / "one_shot_sentiment_prompt.txt"
+RESULTS_DIR = REPO_ROOT / "results"
+TAG = "xlmr"                                # output file prefix
 
-TEST_CSV = "dataset/SentiMix/test.csv"
-ZERO_SHOT_PROMPT = "prompts/zero_shot_lid_prompt.txt"   
-ONE_SHOT_PROMPT = "prompts/one_shot_lid_prompt.txt"
-N_SAMPLES = 10                              # None = all of test.csv
-MAX_SENTENCE_TOKENS = 100                   
 LABELS = ["positive", "negative", "neutral"]
+MAX_SENTENCE_TOKENS = 100                   # keeps prompt + sentence a sensible length
 SAVE_EVERY = 250                            # partial save every N sentences
-
-PREDICTIONS_CSV = "predictions_xlmr.csv"
-METRICS_CSV = "metrics_xlmr.csv"
 
 
 # data
+def find_test_csv() -> Path:
+    # accept dataset/SentiMix or dataset/Sentimix (Linux paths are case-sensitive)
+    for folder in ("SentiMix", "Sentimix"):
+        path = REPO_ROOT / "dataset" / folder / "test.csv"
+        if path.exists():
+            return path
+    raise FileNotFoundError("test.csv not found in {}/dataset/SentiMix".format(REPO_ROOT))
+
+
 def fix_mojibake(token: str) -> str:
     # Repair tokens like 'â€¦' or 'ðÿ˜…' (UTF-8 bytes that were read as cp1252).
     # The 'ÿ' case is an emoji whose 'Ÿ' got lower-cased by the dataset's
     # preprocessing, so it is restored before decoding. Tokens that cannot be
     # repaired are returned unchanged.
-    
     if token.isascii():
         return token
     try:
@@ -100,7 +64,6 @@ def detokenize(tokens: list) -> str:
     # Join the token list back into a normal-looking sentence.
     # Re-attaches @mentions, #hashtags, URLs split into 'https // t . co / x',
     # underscores inside handles, and punctuation, then repairs broken emoji.
-    
     toks = [fix_mojibake(str(t)) for t in tokens]
     out, i, n = [], 0, len(toks)
     attach_next = False                 # glue the next token to the previous one
@@ -140,11 +103,26 @@ def detokenize(tokens: list) -> str:
     return text.strip()
 
 
-def load_test_samples(csv_path: str, n: int) -> pd.DataFrame:
-    df = pd.read_csv(csv_path).head(n).copy()
-    df["text"] = df["sentence"].apply(lambda s: detokenize(ast.literal_eval(s)))
-    df["sentiment"] = df["sentiment"].str.strip().str.lower()
-    return df
+def clean_sentence(sentence) -> str:
+    try:
+        words = ast.literal_eval(sentence)
+        if isinstance(words, list):
+            return detokenize(words)
+    except (ValueError, SyntaxError, TypeError):
+        pass
+    return str(sentence).strip()
+
+
+def load_test_samples(csv_path: Path, n=None) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+    for col in ("id", "sentence"):
+        if col not in df.columns:
+            raise ValueError("Missing column: {}".format(col))
+    df = df.dropna(subset=["id", "sentence"]).copy()
+    if n:
+        df = df.head(n).copy()
+    df["text"] = df["sentence"].apply(clean_sentence)
+    return df.reset_index(drop=True)
 
 
 # model
@@ -152,50 +130,34 @@ def has_weights(folder: Path) -> bool:
     return any(folder.glob("*.safetensors")) or any(folder.glob("*.bin"))
 
 
-def find_local_model(model_path: str):
-    # Look for the model folder next to where you run from, then next to this
-    # script. config.json alone is not enough: an interrupted download leaves it
-    # behind without the weights, and that must count as "missing".
-    for base in (Path.cwd(), Path(__file__).resolve().parent):
-        candidate = base / model_path
-        if (candidate / "config.json").exists() and has_weights(candidate):
-            return candidate
-    return None
-
-
-def download_model(model_path: str) -> Path:
-    # Copy the repo's files as published (same method as the IndicBERT file).
+def download_model(model_dir: Path) -> None:
     # The repo also holds TensorFlow / Flax / ONNX copies of the same weights,
     # which PyTorch never reads, so they are skipped. The .bin duplicate is
     # skipped too unless the repo has no .safetensors file.
     skip = ["*.h5", "*.msgpack", "*.onnx", "onnx/*", "*.ot"]
-    snapshot_download(MODEL_CARD, local_dir=model_path,
-                      ignore_patterns=skip + ["*.bin"])
-    if not any(Path(model_path).glob("*.safetensors")):
-        snapshot_download(MODEL_CARD, local_dir=model_path, ignore_patterns=skip)
-    return Path(model_path)
+    snapshot_download(MODEL_CARD, local_dir=str(model_dir), ignore_patterns=skip + ["*.bin"])
+    if not any(model_dir.glob("*.safetensors")):
+        snapshot_download(MODEL_CARD, local_dir=str(model_dir), ignore_patterns=skip)
 
 
-def get_model(model_path: str = MODEL_DIR):
+def get_model(model_dir: Path = MODEL_DIR):
     # Load xlm-roberta-base WITH its masked-LM head (download once, then reuse).
+    # config.json alone is not enough: an interrupted download leaves it behind
+    # without the weights, and that must count as "missing".
+    if not ((model_dir / "config.json").exists() and has_weights(model_dir)):
+        print("[+] downloading {} into '{}' ...".format(MODEL_CARD, model_dir))
+        download_model(model_dir)
+        if not has_weights(model_dir):
+            raise RuntimeError("download finished but {} has no weights".format(model_dir))
+    print("[+] loading model from", model_dir)
 
-    local = find_local_model(model_path)
-    if local is None:
-        print("[!] no model found at '{}' (looked in {} and {})".format(
-            model_path, Path.cwd(), Path(__file__).resolve().parent))
-        print("[+] downloading {} into '{}' ...".format(MODEL_CARD, model_path))
-        local = download_model(model_path)
-        if not has_weights(local):
-            raise RuntimeError("download finished but {} has no weights".format(local))
-    print("[+] loading model from", local)
-
-    tokenizer = AutoTokenizer.from_pretrained(str(local), local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(model_dir), local_files_only=True)
     model, info = AutoModelForMaskedLM.from_pretrained(
-        str(local), local_files_only=True, output_loading_info=True)
+        str(model_dir), local_files_only=True, output_loading_info=True)
     if "lm_head.dense.weight" in info["missing_keys"]:
         raise RuntimeError("The LM head was not in the checkpoint, so it would be "
                            "random (was this folder saved with AutoModel?). "
-                           "Delete {} and run again.".format(local))
+                           "Delete {} and run again.".format(model_dir))
     model.eval()
     return model, tokenizer
 
@@ -208,132 +170,99 @@ def pick_device() -> torch.device:
     return torch.device("cpu")
 
 
-def label_token_ids(tokenizer) -> list:
-    # One vocabulary id per label: the first real sub-word of ' positive' etc.
-    ids = []
+def label_id_groups(tokenizer) -> list:
+    # For each label, the vocabulary ids that stand for it (same method as the
+    # IndicBERT file, so both models are scored the same way).
+    # Whole-word tokens ("positive" is one piece) are preferred; only if a label
+    # has none do we fall back to the first sub-word. An id claimed by two labels
+    # cannot tell them apart, so it is dropped.
+    whole, first = [], []
     for label in LABELS:
-        pieces = [t for t in tokenizer.encode(" " + label, add_special_tokens=False)
-                  if tokenizer.convert_ids_to_tokens(t) != "▁"]
-        ids.append(pieces[0])
-    print("label tokens:", dict(zip(LABELS, tokenizer.convert_ids_to_tokens(ids))))
-    if len(set(ids)) != len(ids):
-        raise ValueError("two labels share their first sub-word; use another label word")
-    return ids
+        w, f = set(), set()
+        for variant in (" " + label, label, " " + label.capitalize(), label.capitalize()):
+            pieces = [t for t in tokenizer.encode(variant, add_special_tokens=False)
+                      if tokenizer.convert_ids_to_tokens(t) not in ("▁", "")]
+            if len(pieces) == 1:
+                w.add(pieces[0])
+            elif pieces:
+                f.add(pieces[0])
+        whole.append(w)
+        first.append(f)
+    groups = [sorted(w if w else f) for w, f in zip(whole, first)]
+
+    counts = Counter(i for g in groups for i in g)
+    groups = [[i for i in g if counts[i] == 1] for g in groups]
+    if any(not g for g in groups):
+        raise ValueError("a label has no usable token; pick other label words: {}".format(groups))
+    print("label tokens:", {l: tokenizer.convert_ids_to_tokens(g) for l, g in zip(LABELS, groups)})
+    return groups
 
 
-#  prompting
+def logsumexp(x: np.ndarray) -> float:
+    m = float(np.max(x))
+    return m + float(np.log(np.exp(x - m).sum()))
+
+
+# prompting
 def build_prompt(template: str, sentence: str, tokenizer) -> str:
-    # Fill {text}, then turn the final 'Output:' into a slot for the model.
-    # An encoder cannot write an answer, so we cut the prompt at the last
-    # 'Output:' (dropping the trailing instruction in the zero-shot file) and put
-    # <mask> where the label goes.
-    
-    ids = tokenizer.encode(sentence, add_special_tokens=False)[:MAX_SENTENCE_TOKENS]
-    sentence = tokenizer.decode(ids)
+    # Fill {text}, then turn the final 'Output:' into a slot for the model:
+    # everything after the last 'Output:' is dropped and <mask> is put where
+    # the label goes. In the one-shot prompt the example's 'Output: positive'
+    # comes earlier, so it is kept.
+    ids = tokenizer.encode(sentence, add_special_tokens=False)
+    if len(ids) > MAX_SENTENCE_TOKENS:          # decode only when cut, to keep the text as-is
+        sentence = tokenizer.decode(ids[:MAX_SENTENCE_TOKENS])
     rendered = template.replace("{text}", sentence)
-    head = rendered.rsplit("Output:", 1)[0]
-    return head + "Output: " + tokenizer.mask_token
+    if "Output:" not in rendered:
+        raise ValueError("prompt needs an 'Output:' line")
+    return rendered.rsplit("Output:", 1)[0] + "Output: " + tokenizer.mask_token
 
 
 @torch.inference_mode()
-def predict_label(model, tokenizer, prompt: str, label_ids: list, device) -> str:
+def predict_label(model, tokenizer, prompt: str, label_groups: list, device) -> str:
     enc = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
-    mask_pos = (enc["input_ids"][0] == tokenizer.mask_token_id).nonzero()
-    if len(mask_pos) == 0:
-        raise ValueError("<mask> was truncated away; shorten the prompt")
+    mask_pos = (enc["input_ids"][0] == tokenizer.mask_token_id).nonzero().flatten()
+    if len(mask_pos) != 1:
+        raise ValueError("expected exactly one <mask>, found {} (prompt too long?)".format(len(mask_pos)))
     enc = {k: v.to(device) for k, v in enc.items()}
-    logits = model(**enc).logits[0, mask_pos[-1].item()]
-    return LABELS[int(torch.argmax(logits[label_ids]))]
+    # standard MLM: the hidden state AT the mask predicts the masked token
+    logits = model(**enc).logits[0, int(mask_pos[0])].float().cpu().numpy()
+    scores = [logsumexp(logits[ids]) for ids in label_groups]
+    return LABELS[int(np.argmax(scores))]
 
 
-# scoring
-def score(y_true: list, y_pred: list) -> dict:
-    p, r, f, support = precision_recall_fscore_support(
-        y_true, y_pred, labels=LABELS, average=None, zero_division=0)
-    result = {"accuracy": accuracy_score(y_true, y_pred), "per_class": {}}
-    for i, label in enumerate(LABELS):
-        result["per_class"][label] = (p[i], r[i], f[i], int(support[i]))
-    for avg in ("macro", "weighted"):
-        pa, ra, fa, _ = precision_recall_fscore_support(
-            y_true, y_pred, labels=LABELS, average=avg, zero_division=0)
-        result[avg] = (pa, ra, fa)
-    return result
-
-
-def print_report(name: str, res: dict, y_true: list, y_pred: list) -> None:
-    print("\n=== {} ===".format(name))
-    print("{:<10}{:>10}{:>10}{:>10}{:>10}".format("class", "P", "R", "F1", "support"))
-    for label, (p, r, f, s) in res["per_class"].items():
-        print("{:<10}{:>10.3f}{:>10.3f}{:>10.3f}{:>10d}".format(label, p, r, f, s))
-    for avg in ("macro", "weighted"):
-        p, r, f = res[avg]
-        print("{:<10}{:>10.3f}{:>10.3f}{:>10.3f}".format(avg, p, r, f))
-    print("accuracy  {:.3f}".format(res["accuracy"]))
-    print("confusion matrix (rows = true, cols = predicted, order {}):".format(LABELS))
-    print(confusion_matrix(y_true, y_pred, labels=LABELS))
-
-
-def metrics_rows(setting: str, res: dict) -> list:
-    total = sum(v[3] for v in res["per_class"].values())
-    rows = [dict(setting=setting, cls=label, precision=p, recall=r, f1=f, support=s)
-            for label, (p, r, f, s) in res["per_class"].items()]
-    for avg in ("macro", "weighted"):
-        p, r, f = res[avg]
-        rows.append(dict(setting=setting, cls=avg, precision=p, recall=r, f1=f,
-                         support=total))
-    rows.append(dict(setting=setting, cls="accuracy", precision=res["accuracy"],
-                     recall=res["accuracy"], f1=res["accuracy"], support=total))
-    return rows
-
-
-def save_results(df: pd.DataFrame) -> None:
-    # predictions: one row per sentence, both settings side by side
-    df[["id", "text", "sentiment", "zero_shot", "one_shot"]].rename(
-        columns={"text": "sentence", "sentiment": "actual_sentiment"}).to_csv(
-        PREDICTIONS_CSV, index=False)
-    print("\nwrote", PREDICTIONS_CSV)
-
-    # metrics: P, R, F1 per class + macro / weighted / accuracy, per setting
-    y_true = df["sentiment"].tolist()
-    rows = (metrics_rows("zero_shot", score(y_true, df["zero_shot"].tolist()))
-            + metrics_rows("one_shot", score(y_true, df["one_shot"].tolist())))
-    pd.DataFrame(rows).rename(columns={"cls": "class"}).to_csv(METRICS_CSV, index=False)
-    print("wrote", METRICS_CSV)
-
-
-def run_setting(name, template, df, predict_fn) -> list:
+# running
+def run_setting(name: str, template: str, df: pd.DataFrame, predict_fn) -> None:
+    out_csv = RESULTS_DIR / "{}_{}.csv".format(TAG, name)
     preds = []
     for i, sentence in enumerate(tqdm(df["text"], desc=name)):
         preds.append(predict_fn(template, sentence))
         if (i + 1) % SAVE_EVERY == 0:                    # partial save, just in case
-            part = df.iloc[:len(preds)][["id", "text", "sentiment"]].copy()
-            part[name] = preds
-            part.to_csv("partial_xlmr_{}.csv".format(name), index=False)
-    print_report(name, score(df["sentiment"].tolist(), preds),
-                 df["sentiment"].tolist(), preds)
-    return preds
+            pd.DataFrame({"id": df["id"][:len(preds)], "sentiment": preds}).to_csv(out_csv, index=False)
+    pd.DataFrame({"id": df["id"], "sentiment": preds}).to_csv(out_csv, index=False)
+    print("wrote", out_csv)
 
 
 # driving code
 if __name__ == "__main__":
-    df = load_test_samples(TEST_CSV, N_SAMPLES)
-    print("sentences sent to the model:")
-    for i, (text, gold) in enumerate(zip(df["text"], df["sentiment"])):
-        print("{:>2}. [{}] {}".format(i + 1, gold, text))
+    parser = argparse.ArgumentParser(description="XLM-R zero/one-shot sentiment prompting")
+    parser.add_argument("--test_csv", type=Path, default=None, help="default: dataset/SentiMix/test.csv")
+    parser.add_argument("--n_samples", type=int, default=None, help="first N sentences only (default: all)")
+    args = parser.parse_args()
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    df = load_test_samples(args.test_csv or find_test_csv(), args.n_samples)
+    print("sentences:", len(df))
 
     model, tokenizer = get_model(MODEL_DIR)
     device = pick_device()
+    print("device:", device)
     model.to(device)
-    label_ids = label_token_ids(tokenizer)
+    label_groups = label_id_groups(tokenizer)
 
     def predict(template, sentence):
         prompt = build_prompt(template, sentence, tokenizer)
-        return predict_label(model, tokenizer, prompt, label_ids, device)
+        return predict_label(model, tokenizer, prompt, label_groups, device)
 
-    zero_template = Path(ZERO_SHOT_PROMPT).read_text(encoding="utf-8")
-    one_template = Path(ONE_SHOT_PROMPT).read_text(encoding="utf-8")
-
-    df["zero_shot"] = run_setting("zero_shot", zero_template, df, predict)
-    df["one_shot"] = run_setting("one_shot", one_template, df, predict)
-
-    save_results(df)
+    run_setting("zero_shot", ZERO_SHOT_PROMPT.read_text(encoding="utf-8"), df, predict)
+    run_setting("one_shot", ONE_SHOT_PROMPT.read_text(encoding="utf-8"), df, predict)
