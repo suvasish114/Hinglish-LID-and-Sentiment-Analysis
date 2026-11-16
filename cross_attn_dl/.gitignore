@@ -1,0 +1,8 @@
+results/
+logs/
+__pycache__/
+.env
+checkpoints/
+dataset
+# one-off local helper with machine-specific paths
+queue_gemma.sh
